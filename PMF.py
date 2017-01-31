@@ -92,26 +92,27 @@ class ExplicitMF():
                                              ratings[:, i].T.dot(fixed_vecs))
         return latent_vectors
 
-    def train(self, n_iter=10, learning_rate=0.1, from_scratch = True):
+    def train(self, n_iter=10, learning_rate=0.1, from_scratch = True, user_step = True, item_step = True):
         """ Train model for n_iter iterations from scratch."""
         # initialize latent vectors
-        if (from_scratch):
-            self.user_vecs = np.random.normal(scale=1./self.n_factors,\
-                                          size=(self.n_users, self.n_factors))
+        if (from_scratch or not user_step):
+            self.item_bias = np.zeros(self.n_items)
             self.item_vecs = np.random.normal(scale=1./self.n_factors,
                                           size=(self.n_items, self.n_factors))
-        
+        if (from_scratch or not item_step):
+            self.user_vecs = np.random.normal(scale=1./self.n_factors,\
+                                          size=(self.n_users, self.n_factors))
+            self.user_bias = np.zeros(self.n_users)
+        if (from_scratch):
+            self.global_bias = np.mean(self.ratings[np.where(self.ratings != 0)])
         if self.learning == 'als':
             self.partial_train(n_iter)
         elif self.learning == 'sgd':
             self.learning_rate = learning_rate
-            self.user_bias = np.zeros(self.n_users)
-            self.item_bias = np.zeros(self.n_items)
-            self.global_bias = np.mean(self.ratings[np.where(self.ratings != 0)])
-            self.partial_train(n_iter)
+            self.partial_train(n_iter, user_step, item_step )
     
     
-    def partial_train(self, n_iter):
+    def partial_train(self, n_iter, user_step = True, item_step = True):
         """ 
         Train model for n_iter iterations. Can be 
         called multiple times for further training.
@@ -134,10 +135,10 @@ class ExplicitMF():
             elif self.learning == 'sgd':
                 self.training_indices = np.arange(self.n_samples)
                 np.random.shuffle(self.training_indices)
-                self.sgd()
+                self.sgd(user_step, item_step)
             ctr += 1
 
-    def sgd(self):
+    def sgd(self, user_step = True, item_step = True):
         for idx in self.training_indices:
             u = self.sample_row[idx]
             i = self.sample_col[idx]
@@ -145,16 +146,20 @@ class ExplicitMF():
             e = (self.ratings[u,i] - prediction) # error
             
             # Update biases
-            self.user_bias[u] += self.learning_rate * \
+            if (user_step):
+                self.user_bias[u] += self.learning_rate * \
                                 (e - self.user_bias_reg * self.user_bias[u])
-            self.item_bias[i] += self.learning_rate * \
+            if (item_step):
+                self.item_bias[i] += self.learning_rate * \
                                 (e - self.item_bias_reg * self.item_bias[i])
             
             #Update latent factors
-            self.user_vecs[u, :] += self.learning_rate * \
+            if (user_step):
+                self.user_vecs[u, :] += self.learning_rate * \
                                     (e * self.item_vecs[i, :] - \
                                      self.user_fact_reg * self.user_vecs[u,:])
-            self.item_vecs[i, :] += self.learning_rate * \
+            if (item_step):
+                self.item_vecs[i, :] += self.learning_rate * \
                                     (e * self.user_vecs[u, :] - \
                                      self.item_fact_reg * self.item_vecs[i,:])
     def predict(self, u, i):
@@ -162,7 +167,9 @@ class ExplicitMF():
         if self.learning == 'als':
             return self.user_vecs[u, :].dot(self.item_vecs[i, :].T)
         elif self.learning == 'sgd':
+            #print (self.global_bias, self.item_bias[i])
             prediction = self.global_bias + self.user_bias[u] + self.item_bias[i]
+            #print(prediction, self.user_vecs[u,:], self.item_vecs[i,:])
             prediction += self.user_vecs[u, :].dot(self.item_vecs[i, :].T)
             return prediction
     

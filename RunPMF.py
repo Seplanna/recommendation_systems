@@ -1,11 +1,37 @@
 import sys
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
+from scipy.sparse import lil_matrix
 #import seaborn as sns
 from PMF import *
+import math
 #sns.set()
-np.random.seed(0)
+#np.random.seed(0)
+
+def DCG(truth):
+    n = len(truth)
+    res = 0
+    for i in range(n):
+        res += (2**truth[i] - 1.) / (math.log(i+2., 2.))
+    return float(res) / n
+
+def NDCG(truth):
+    try:
+        dcg = DCG(truth)
+        perfect_DCG = DCG(sorted(truth, key=lambda x: -x))
+        return dcg / perfect_DCG
+    except:
+        return  0.
+
+
+def save_sparse_matrix(filename, x):
+    x_coo = x.tocoo()
+    row = x_coo.row
+    col = x_coo.col
+    data = x_coo.data
+    shape = x_coo.shape
+    np.savez(filename, row=row, col=col, data=data, shape=shape)
 
 
 def GetData(file):
@@ -24,6 +50,8 @@ def train_test_split(ratings):
     test = np.zeros(ratings.shape)
     train = ratings.copy()
     for user in xrange(ratings.shape[0]):
+        if len(ratings[user,:].nonzero()[0]) < 15:
+            continue
         test_ratings = np.random.choice(ratings[user, :].nonzero()[0], 
                                         size=10, 
                                         replace=False)
@@ -37,13 +65,21 @@ def train_test_split(ratings):
 #def train_test_split_by_user(ratings, users):
 
 def GetData1(directory):
-    names = ['user_id', 'item_id', 'rating', 'timestamp']
-    df = pd.read_csv(directory + "/" + 'u.data', sep='\t', names=names)
-    n_users = df.user_id.unique().shape[0]
-    n_items = df.item_id.unique().shape[0]
-    ratings = np.zeros((n_users, n_items))
+    names = ['userId', 'movieId', 'rating', 'timestamp']
+    #df = pd.read_csv(directory + "/" + 'u.data', sep='\t', names=names)
+    #df = pd.read_csv(directory + "/" + 'ratings.dat', sep='::', names=names)   
+    df = pd.read_csv(directory + "/" + 'ratings.csv')
+    n_users = df.userId.unique().shape[0]
+    n_items = max(df.movieId.unique())
+    print(n_users, n_items)
+    #ratings = np.zeros((n_users, n_items))
+    ratings = lil_matrix((n_users, n_items))
+    print(ratings.shape)
     for row in df.itertuples():
         ratings[row[1]-1, row[2]-1] = (int(row[3] > 3.5) - 0.5) * 2
+
+
+
     print str(n_users) + ' users'
     print str(n_items) + ' items'
     sparsity = float(len(ratings.nonzero()[0]))
@@ -51,6 +87,25 @@ def GetData1(directory):
     sparsity *= 100
     print 'Sparsity: {:4.2f}%'.format(sparsity)
     return ratings
+
+def GetTestUsers(ratings, n_users_in_test, dir):
+    array = np.arange(ratings.shape[0])
+    np.random.shuffle(array)
+    test_users = array[:n_users_in_test]
+
+    # filter items
+    ratings1 = ratings[array[n_users_in_test:]].T
+    items = []
+    for i in xrange(ratings1.shape[0]):
+        # print(ratings1[i].nonzero(), len(ratings1[i].nonzero()[0]))
+        if len(ratings1[i].nonzero()[1]) > 10: #and len(ratings1[i].nonzero()[1]) < 2000:
+            items.append(i)
+
+    print(len(items))
+    ratings = ratings.T[items]
+    ratings = ratings.T
+    np.savetxt(dir  + "test_items.txt", items)
+    return ratings[array[n_users_in_test:]], ratings[test_users], array
 
 def plot_learning_curve(iter_array, model, save_fig):
     fig = plt.figure()
@@ -102,38 +157,89 @@ def Print_result(model, ratings):
     mse = 0
     n_ex = 0
     result = []
+    ndcg = 0.
+    n_positive_ex = 0
     for user in xrange(ratings.shape[0]):
-        test_ratings = ratings[user, :].nonzero()[0]
+        user_result = []
+        truth = []
+        test_ratings = ratings[user].nonzero()[0]
         for item in test_ratings:
+            #print(user, item, ratings[user, item])
+            #print(model.predict(user, item))
+            if ratings[user,item] > 0:
+                n_positive_ex += 1
             result.append([ratings[user, item], model.predict(user, item)])
-    result.sort(key = lambda x:x[1])
+            user_result.append([ratings[user, item], model.predict(user, item)])
+        user_result.sort(key = lambda x:-x[1])
+        for r in user_result:
+            truth.append(r[0])
+        ndcg1 = NDCG(np.array(truth) + 1.)
+        ndcg += ndcg1
+        if (ndcg1 > 1.):
+            print (truth, ndcg1)
+        #print (ndcg/(user + 1.))
+
+
+    result.sort(key = lambda x:-x[1])
+    n_positive_local = 0
+    error = 0.
+    i = 0.
     with open('res.txt', 'w') as res:
         for r in result:
+            i += 1
             mse += (r[1] - r[0]) ** 2
-            error += int((r[1] * r[0]) > 0)
+            if r[0] > 0:
+                n_positive_local += 1
+            local_error = (n_positive_local + len(result) - i - n_positive_ex + n_positive_local) / len(result)
+            if (local_error > error):
+                error = local_error
+           # error += int((r[1] * r[0]) > 0)
             n_ex += 1
             res.write(str(r[0]) + "\t" + str(r[1]) + '\n')
-    return error / n_ex, mse / n_ex
+    return error, mse / n_ex
 
-def main():
-    dir_with_data = "../../movieLens/ml-100k"
-    train, test = train_test_split(GetData1(dir_with_data))
+def main(n_factors, i):
+    print(n_factors)
+    #dir_with_data = "../../movieLens/ml-100k"
+    dir_with_data = "../DATA/ml-20m"
+    dir = "../PWL/data" + str(i) + "/"
+    #train, test1 = train_test_split(GetData1(dir_with_data))
     ratings = GetData1(dir_with_data)
-    best_sgd_model = ExplicitMF(ratings, n_factors=10, learning='sgd', \
+    n_users_in_test = 1000#ratings.shape[0] / 3
+    train, test, users_order = GetTestUsers(ratings, n_users_in_test, dir)
+    best_sgd_model = ExplicitMF(train, n_factors=n_factors, learning='sgd', \
                             item_fact_reg=0.01, user_fact_reg=0.01, \
                             user_bias_reg=0.01, item_bias_reg=0.01)
-    for i in range(20):
-        best_sgd_model.train(300, learning_rate=0.01 / (i + 1), from_scratch=(i==0))
-        print(Print_result(best_sgd_model, test))
-        dir = "../../RL/data/"
+    save_sparse_matrix(dir + "tes_ratings.txt", test)
+
+    #np.savetxt(dir + "tes_ratings.txt", test.data)
+    for i in range(2):
+        best_sgd_model.train(100, learning_rate=0.01 / (i + 1), from_scratch=(i==0))
+        #print(Print_result(best_sgd_model, test))
+
         np.savetxt(dir + "items.txt", best_sgd_model.item_vecs)
+        print(best_sgd_model.item_vecs.shape)
         np.savetxt(dir + "items_bias.txt", best_sgd_model.item_bias)
-        np.savetxt(dir + "users.txt", best_sgd_model.user_vecs)
-        np.savetxt(dir + "user_bias.txt", best_sgd_model.user_bias)
+        np.savetxt(dir + "users_train.txt", best_sgd_model.user_vecs)
+        np.savetxt(dir + "user_bias_train.txt", best_sgd_model.user_bias)
         with open(dir + "global_bias.txt", 'w') as global_bias:
             global_bias.write(str(best_sgd_model.global_bias))
+
+    best_sgd_model1 = ExplicitMF(test, n_factors=n_factors, learning='sgd', \
+                                item_fact_reg=0.01, user_fact_reg=0.01, \
+                                user_bias_reg=0.01, item_bias_reg=0.01)
+    best_sgd_model1.item_vecs = best_sgd_model.item_vecs
+    best_sgd_model1.item_bias = best_sgd_model.item_bias
+    best_sgd_model1.global_bias = best_sgd_model.global_bias
+    best_sgd_model1.train(200, learning_rate=0.01, from_scratch=False, user_step = True, item_step = False)
+    print(Print_result(best_sgd_model1, test))
+    np.savetxt(dir + "user_bias.txt", best_sgd_model1.user_bias)
+    np.savetxt(dir + "users.txt", best_sgd_model1.user_vecs)
+    np.savetxt(dir + 'test.txt', users_order)
+#    with open(dir + "n_users_in_test.txt", 'w') as global_bias:
+#        global_bias.write(str(n_users_in_test))
 #    best_sgd_model.item_vecs = np.genfromtxt(sys.argv[2])
-#    best_sgd_model.item_bias = np.genfromtxt(sys.argv[3]) 
+#    best_sgd_model.item_bias = np.genfromtxt(sys.argv[3])
 #    best_sgd_model.user_vecs = np.genfromtxt(sys.argv[4])
 #    best_sgd_model.user_bias = np.genfromtxt(sys.argv[5])
 #    with open(sys.argv[6], 'r') as global_bias:
@@ -149,6 +255,12 @@ def GetItemsNames(file):
             line = line.strip().split['|']
             items_names[int(line[0])] = line[1]
     return items_names
-    
 
-main()
+FLAGS = None
+import argparse
+if __name__ == '__main__':
+    for i in range(1):
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--f', type = str, default = 100)
+        FLAGS, unparsed = parser.parse_known_args()
+        main(int(FLAGS.f), i)
