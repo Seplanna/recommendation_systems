@@ -234,16 +234,32 @@ def MakeNormalRatingFormat(rating_old_file, rating_new_file):
     data = test_ratings['data']
     col = test_ratings['col']
     rows = test_ratings['row']
+    item_popularity = np.zeros(test_ratings['shape'][1])
     for i in range(len(rows)):
         test_rat[rows[i], col[i]] = data[i]
+        item_popularity[col[i]] -= 1
+    sorted_item_popularity = np.argsort(item_popularity)
+    print(item_popularity[sorted_item_popularity[1000]], test_rat.shape[0])
     np.savetxt(rating_new_file, test_rat)
+    np.savetxt(rating_new_file + "_", sorted_item_popularity[:1000])
+    
     return test_rat
 
 def TrainTestUsers():
     #test_rat = MakeNormalRatingFormat(dir + "tes_ratings.txt.npz", dir + "tes_ratings.txt")
     test_rat = np.genfromtxt(dir + "tes_ratings.txt")
+    popular_items = np.genfromtxt(dir + "train_ratings.txt_").astype(int)
     #train = test_rat
-    train, test = train_test_split(test_rat)
+    #train, test = train_test_split(test_rat)
+    train = np.zeros(test_rat.shape)
+    train = train.T
+    train[popular_items] = test_rat.T[popular_items]
+    train = train.T
+    test_rat = test_rat.T
+    print(len(test_rat.nonzero()[0]))
+    test_rat[popular_items] = 0.
+    print(len(test_rat.nonzero()[0]))
+    test_rat = test_rat.T
     model = ExplicitMF(train, n_factors=n_factors, learning='sgd', \
                                  item_fact_reg=0.01, user_fact_reg=0.01, \
                                  user_bias_reg=0.01, item_bias_reg=0.01)
@@ -252,8 +268,18 @@ def TrainTestUsers():
     model.global_bias = np.genfromtxt(dir + "global_bias.txt")
     model.user_vecs = np.genfromtxt(dir + "users_train1.txt")
     model.user_bias = np.genfromtxt(dir + "user_bias_train1.txt")
-    model.train(10, learning_rate=0.01, from_scratch=False, user_step=True, item_step=False)
-    print(Print_result(model, test))
+    model.user_bias = np.mean(train, axis=1)
+    for i in range(train.shape[0]):
+        non_zero = train[i].nonzero()[0]
+        questions = model.item_vecs[non_zero]
+        print(questions.shape)
+        answers = train[i][non_zero] - model.item_bias[non_zero] - model.user_bias[i] - model.global_bias
+        new_inverse_matrix = np.linalg.inv(np.dot(questions.T, questions) + 0.01 * np.eye(questions.shape[1]))
+        model.user_vecs[i] = np.dot(new_inverse_matrix,
+                         np.dot(np.array(answers), np.array(questions)))
+        
+    #model.train(10, learning_rate=0.01, from_scratch=False, user_step=True, item_step=False)
+    print(Print_result(model, test_rat))
     np.savetxt(dir + "user_bias.txt", model.user_bias)
     np.savetxt(dir + "users.txt", model.user_vecs)
 
