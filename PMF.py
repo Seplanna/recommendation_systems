@@ -158,10 +158,14 @@ class ExplicitMF():
                 self.user_vecs[u, :] += self.learning_rate * \
                                     (e * self.item_vecs[i, :] - \
                                      self.user_fact_reg * self.user_vecs[u,:])
+                #low_ind_user = np.abs(self.user_vecs[u, :]) < 0.01
+                #self.user_vecs[u, low_ind_user] = 0.
             if (item_step):
                 self.item_vecs[i, :] += self.learning_rate * \
                                     (e * self.user_vecs[u, :] - \
                                      self.item_fact_reg * self.item_vecs[i,:])
+                #low_ind_item = np.abs(self.item_vecs[i, :]) < 0.01
+                #self.item_vecs[i, low_ind_item] = 0.
     def predict(self, u, i):
         """ Single user and item prediction."""
         if self.learning == 'als':

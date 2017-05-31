@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 #import matplotlib.pyplot as plt
 from scipy.sparse import lil_matrix
+from scipy import sparse
+import scipy
 #import seaborn as sns
 from PMF import *
 import math
@@ -32,7 +34,9 @@ def save_sparse_matrix(filename, x):
     data = x_coo.data
     shape = x_coo.shape
     np.savez(filename, row=row, col=col, data=data, shape=shape)
-
+    f = open(filename, 'w')
+    for i in range(row.shape[0]):
+        f.write(str(row[i]) + "," + str(col[i]) + "," + str(data[i]) + "\n")
 
 def GetData(file):
     data = np.zeros(shape=(80000,3))
@@ -66,41 +70,69 @@ def train_test_split(ratings):
 
 def GetData1(directory):
     names = ['userId', 'movieId', 'rating', 'timestamp']
-    #df = pd.read_csv(directory + "/" + 'u.data', sep='\t', names=names)
-    #df = pd.read_csv(directory + "/" + 'ratings.dat', sep='::', names=names)   
-    df = pd.read_csv(directory + "/" + 'ratings.csv')
-    n_users = df.userId.unique().shape[0]
-    n_items = max(df.movieId.unique())
-    print(n_users, n_items)
+    df = pd.read_csv(directory + "/" + 'ratings3.csv', names=names)
+    #df = pd.read_csv(directory + "/" + 'ratings_negative1.csv', names=names)
+    n_users = max(df.userId.unique() + 1)
+    n_items = max(df.movieId.unique() + 1)
+    #print(n_users, n_items)
     #ratings = np.zeros((n_users, n_items))
     ratings = lil_matrix((n_users, n_items))
     print(ratings.shape)
     for row in df.itertuples():
-        ratings[row[1]-1, row[2]-1] = (int(row[3] > 3.5) - 0.5) * 2
+        #print(row[1], row[2], row[3])
+        ratings[row[1], row[2]] = (int(row[3] > 3.5) - 0.5) * 2
+        #ratings[row[1], row[2]] = (int(row[3] > 0.5) - 0.5) * 2
 
 
 
     print str(n_users) + ' users'
     print str(n_items) + ' items'
     sparsity = float(len(ratings.nonzero()[0]))
+    print(sparsity, n_items, n_users)
     sparsity /= (ratings.shape[0] * ratings.shape[1])
     sparsity *= 100
     print 'Sparsity: {:4.2f}%'.format(sparsity)
     return ratings
 
 def GetTestUsers(ratings, n_users_in_test, dir):
+    
+    #print(ratings.shape)
+    (x,y,z) = scipy.sparse.find(ratings)
+    #countings=np.bincount(x)
+    #users = np.where(countings>10)[0]
+    #ratings = ratings[users]
+   
+    (x,y,z) = scipy.sparse.find(ratings)
+    countings=np.bincount(x)
+    #users_bias = np.mean(ratings, axis=1)
+    #users = np.where(abs(users_bias) < 0.33)[0]
+    
+    #ratings = ratings[users]
+    print(ratings.shape)
+    
+
     array = np.arange(ratings.shape[0])
     np.random.shuffle(array)
     test_users = array[:n_users_in_test]
 
     # filter items
     ratings1 = ratings[array[n_users_in_test:]].T
+     
+    (x, y, z) = sparse.find(ratings1)
+    countings = np.bincount(x)
+    sums = np.bincount(x, weights=z)
+    averages = sums / (countings +1e-10)
+    print(averages)
+
     items = []
     for i in xrange(ratings1.shape[0]):
         # print(ratings1[i].nonzero(), len(ratings1[i].nonzero()[0]))
-        if len(ratings1[i].nonzero()[1]) > 10: #and len(ratings1[i].nonzero()[1]) < 2000:
+        if len(ratings1[i].nonzero()[1]) > 10:
             items.append(i)
-
+   
+    
+    (x, y, z) = sparse.find(ratings1)
+    countings = np.bincount(x)
     print(len(items))
     ratings = ratings.T[items]
     ratings = ratings.T
@@ -168,9 +200,9 @@ def Print_result(model, ratings):
             #print(model.predict(user, item))
             if ratings[user,item] > 0:
                 n_positive_ex += 1
-            result.append([ratings[user, item], model.predict(user, item)])
-            user_result.append([ratings[user, item], model.predict(user, item)])
-        user_result.sort(key = lambda x:-x[1])
+            result.append([ratings[user, item], model.predict(user, item), user, item, model.item_bias[item], model.user_bias[user], ','.join(str(u) for u in model.user_vecs[user])])
+            user_result.append([ratings[user, item], model.predict(user, item), user, item])
+        user_result.sort(key = lambda x:(-x[-1],-x[1]))
         for r in user_result:
             truth.append(r[0])
         ndcg1 = NDCG(np.array(truth) + 1.)
@@ -195,7 +227,7 @@ def Print_result(model, ratings):
                 error = local_error
            # error += int((r[1] * r[0]) > 0)
             n_ex += 1
-            res.write(str(r[0]) + "\t" + str(r[1]) + '\n')
+            res.write(str(r[0]) + "\t" + str(r[1]) + "\t" + str(r[2]) +"\t" + str(r[3]) + "\t" + str(r[4]) + "\t" + str(r[5]) + "\t" + str(r[6])+'\n')
     return error, mse / n_ex
 
 def main(n_factors, i):

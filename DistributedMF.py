@@ -12,21 +12,36 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--i', type = int)
 parser.add_argument('--u', type = int)
 parser.add_argument('--f', type = int)
+parser.add_argument('--r', type = float)
 FLAGS, unparsed = parser.parse_known_args()
+
+
+#dir = "../data" + str(FLAGS.f) + "/"
 
 data_dir = "../DATA/ml-20m"
 dir = "../GeneratedData/data" + str(FLAGS.f) + "/"
 item_dir = "../GeneratedData/data" + str(FLAGS.f) + "/ITEMS/"
 user_dir = "../GeneratedData/data" + str(FLAGS.f) + "/USERS/"
-
 n_test_users = 1000 
-n_factors = 50
-n_process = 30
+#n_factors = 30
+n_process = 1
+threshold = 3.5
+n_factors = FLAGS.u
 
+"""
+data_dir = "../DATA/Amazone"
+dir = "../GeneratedDataAmazone/data" + str(FLAGS.f) + "/"
+item_dir = "../GeneratedDataAmazone/data" + str(FLAGS.f) + "/ITEMS/"
+user_dir = "../GeneratedDataAmazone/data" + str(FLAGS.f) + "/USERS/"
+n_test_users = 1000 
+n_factors = FLAGS.u
+n_process = 1
+threshold = 0.5
+"""
 def GetPartOFRating(users, items):
     names = ['userId', 'movieId', 'rating', 'timestamp']
-    #df = pd.read_csv(data_dir + "/" + 'ratings.dat', sep='::', names=names)
-    df = pd.read_csv(data_dir + "/" + 'ratings.csv')
+    df = pd.read_csv(data_dir + "/" + 'ratings3.csv', names=names)
+    #df = pd.read_csv(data_dir + "/" + 'ratings_negative1.csv', names=names)
     n_users = len(users.keys())
     n_items = len(items.keys())
     print(n_users, n_items)
@@ -35,7 +50,7 @@ def GetPartOFRating(users, items):
     print(ratings.shape)
     for row in df.itertuples():
         if row[1] - 1 in users and row[2] - 1 in items:
-            ratings[users[row[1] - 1], items[row[2] - 1]] = (int(row[3] > 3.5) - 0.5) * 2
+            ratings[users[row[1] - 1], items[row[2] - 1]] = (int(row[3] > threshold) - 0.5) * 2
     return ratings
 
 def GetPartOfSparceRatings(users, items):
@@ -50,6 +65,7 @@ def GetPartOfSparceRatings(users, items):
 
     for i in range(len(rows)):
         if rows[i] in users and col[i] in items:
+            #print(data[i])
             ratings[users[rows[i]], items[col[i]]] = data[i]
     return ratings
 
@@ -112,12 +128,15 @@ def RunOneProcess(user_set, item_set, n_process, n_factors = 100):
     global_bias = np.genfromtxt(dir + "global_bias.txt")
 
     items = Get_items(items_array, n_process, item_set)
+    #items = Get_items(items_array, 1, 0)
     users = Get_items(users_array, n_process, user_set)
     ratings = GetPartOfSparceRatings(users, items)
 
+    #reg = 0.01
+    reg = FLAGS.r
     best_sgd_model = ExplicitMF(ratings, n_factors=n_factors, learning='sgd', \
-                                 item_fact_reg=0.01, user_fact_reg=0.01, \
-                                 user_bias_reg=0.01, item_bias_reg=0.01)
+                                 item_fact_reg=reg, user_fact_reg=reg, \
+                                 user_bias_reg=reg, item_bias_reg=reg)
     best_sgd_model.item_vecs = item_vecs
     best_sgd_model.item_bias = item_bias
     best_sgd_model.global_bias = global_bias
@@ -126,9 +145,9 @@ def RunOneProcess(user_set, item_set, n_process, n_factors = 100):
     print(Print_result(best_sgd_model, ratings))
     learning_rate = 0.01
     if (user_set > item_set):
-        learning_rate *= 1. / sqrt(user_set - item_set + 1.)
+        learning_rate *= 1. #/ sqrt(user_set - item_set + 1.)
     else:
-        learning_rate *= 1./ sqrt(user_set - item_set + 1. + n_process)
+        learning_rate *= 1.#/ sqrt(user_set - item_set + 1. + n_process)
     best_sgd_model.train(30, learning_rate=learning_rate, from_scratch=False)
     print(Print_result(best_sgd_model,ratings))
 
@@ -177,6 +196,8 @@ def CreateDataFirst(n_factors, n_process):
     user_step = n_users / n_process
     for i in xrange(n_process):
         np.savetxt(item_dir + "vecs/" + str(i), item_vecs[item_step * i : item_step * (i+1)])
+        #np.savetxt(item_dir + "vecs/" + str(i), item_vecs)
+        #np.savetxt(item_dir + "bias/" + str(i), item_bias)
         np.savetxt(item_dir + "bias/" + str(i), item_bias[item_step * i : item_step * (i+1)])
         np.savetxt(user_dir + "vecs/" + str(i), user_vecs[user_step * i : user_step * (i+1)])
         np.savetxt(user_dir + "bias/" + str(i), user_bias[user_step * i : user_step * (i+1)])
@@ -234,21 +255,33 @@ def MakeNormalRatingFormat(rating_old_file, rating_new_file):
     data = test_ratings['data']
     col = test_ratings['col']
     rows = test_ratings['row']
-    item_popularity = np.zeros(test_ratings['shape'][1])
     for i in range(len(rows)):
         test_rat[rows[i], col[i]] = data[i]
-        item_popularity[col[i]] -= 1
-    sorted_item_popularity = np.argsort(item_popularity)
-    print(item_popularity[sorted_item_popularity[1000]], test_rat.shape[0])
     np.savetxt(rating_new_file, test_rat)
-    np.savetxt(rating_new_file + "_", sorted_item_popularity[:1000])
     
     return test_rat
 
-def TrainTestUsers():
+def CalculatePopularity(rating_old_file, rating_new_file):
+    test_ratings = np.load(rating_old_file)
+    data = test_ratings['data']
+    col = test_ratings['col']
+    rows = test_ratings['row']
+    item_popularity = np.zeros(test_ratings['shape'][1])
+    for i in range(len(rows)):
+        item_popularity[col[i]] += 1
+    sorted_item_popularity = np.argsort(-item_popularity)
+    #print(item_popularity[sorted_item_popularity[10000]])
+    print(sorted_item_popularity)
+    #popular_items = sorted_item_popularity[:1000]
+    popular_items = np.random.choice(sorted_item_popularity, test_ratings['shape'][1] / 2, False)
+    print(popular_items)
+    np.savetxt(rating_new_file + "_", popular_items)
+
+def TrainTestUsers(rating_file, popular_it_file):
     #test_rat = MakeNormalRatingFormat(dir + "tes_ratings.txt.npz", dir + "tes_ratings.txt")
-    test_rat = np.genfromtxt(dir + "tes_ratings.txt")
-    popular_items = np.genfromtxt(dir + "train_ratings.txt_").astype(int)
+    test_rat = np.genfromtxt(dir + rating_file)
+    popular_items = np.genfromtxt(dir + popular_it_file).astype(int)
+    #print(popular_items)
     #train = test_rat
     #train, test = train_test_split(test_rat)
     train = np.zeros(test_rat.shape)
@@ -261,28 +294,57 @@ def TrainTestUsers():
     print(len(test_rat.nonzero()[0]))
     test_rat = test_rat.T
     model = ExplicitMF(train, n_factors=n_factors, learning='sgd', \
-                                 item_fact_reg=0.01, user_fact_reg=0.01, \
-                                 user_bias_reg=0.01, item_bias_reg=0.01)
+                                 item_fact_reg=0.1, user_fact_reg=0.1, \
+                                 user_bias_reg=0.1, item_bias_reg=0.1)
     model.item_vecs = np.genfromtxt(dir + "items1.txt")
-    model.item_bias = np.genfromtxt(dir + "items_bias1.txt")
+    item_bias = np.genfromtxt(dir + "items_bias1.txt")
+    print(item_bias)
+    model.item_bias = item_bias#np.zeros(item_bias.shape)
+    #null_items = np.where(np.abs(model.item_bias) > 0.4)[0]
+    #train = train.T
+    #train[null_items] = 0
+    #train = train.T
+    #test_rat = test_rat.T
+    #test_rat[null_items] = 0
+    #test_rat = test_rat.T    
+
     model.global_bias = np.genfromtxt(dir + "global_bias.txt")
-    model.user_vecs = np.genfromtxt(dir + "users_train1.txt")
-    model.user_bias = np.genfromtxt(dir + "user_bias_train1.txt")
+    user_vecs = np.genfromtxt(dir + "users_train1.txt")
+    first_user = np.mean(user_vecs, axis=0)
+    model.user_vecs = np.zeros((train.shape[0], n_factors))
+    #model.user_vecs += first_user
+    
+    model.user_bias = np.zeros(train.shape[0])
+   
+   
+    #model.user_vecs = np.genfromtxt(dir + "users_train1.txt")
     model.user_bias = np.mean(train, axis=1)
-    for i in range(train.shape[0]):
+    print(train.shape)
+    print(Print_result(model, train))
+    print(Print_result(model, test_rat))
+    """for i in range(train.shape[0]):
+        #if (len(train[i].nonzero()[0]) > 10):
         non_zero = train[i].nonzero()[0]
         questions = model.item_vecs[non_zero]
-        print(questions.shape)
         answers = train[i][non_zero] - model.item_bias[non_zero] - model.user_bias[i] - model.global_bias
-        new_inverse_matrix = np.linalg.inv(np.dot(questions.T, questions) + 0.01 * np.eye(questions.shape[1]))
-        model.user_vecs[i] = np.dot(new_inverse_matrix,
-                         np.dot(np.array(answers), np.array(questions)))
-        
-    #model.train(10, learning_rate=0.01, from_scratch=False, user_step=True, item_step=False)
+        new_inverse_matrix = np.linalg.inv(np.dot(questions.T, questions) + 0.07 * np.eye(questions.shape[1]))
+        model.user_vecs[i] = np.dot(np.dot(new_inverse_matrix, questions.T), answers)
+        prediction = []
+        for j in range(len(non_zero)):
+            prediction.append(model.predict(i, non_zero[j]))
+    """
+    model.train(10, learning_rate=0.1, from_scratch=False, user_step=True, item_step=False)
+    print(Print_result(model, train))
     print(Print_result(model, test_rat))
     np.savetxt(dir + "user_bias.txt", model.user_bias)
     np.savetxt(dir + "users.txt", model.user_vecs)
 
+def SVDItemDecomposition(item_file, U, V, S):
+     items = np.genfromtxt(item_file)
+     u, s, v = np.linalg.svd(items, full_matrices=False)
+     np.savetxt(U,u)
+     np.savetxt(V,v)
+     np.savetxt(S,s)
 """import argparse
 
 parser = argparse.ArgumentParser()
@@ -305,7 +367,9 @@ if (FLAGS.i == 1):
 if (FLAGS.i == 2):
     MergeData(n_process)
 if (FLAGS.i == 3):
-    TrainTestUsers()
+    TrainTestUsers("tes_ratings1.txt", "train_ratings.txt_")
 if (FLAGS.i == 4):
-    MakeNormalRatingFormat(dir + "tes_ratings.txt.npz", dir + "tes_ratings.txt")
-    MakeNormalRatingFormat(dir + "train_ratings.txt.npz", dir + "train_ratings.txt")
+    MakeNormalRatingFormat(dir + "tes_ratings.txt.npz", dir + "tes_ratings1.txt")
+    CalculatePopularity(dir + "train_ratings.txt.npz", dir + "train_ratings.txt")
+if (FLAGS.i == 5):
+   SVDItemDecomposition(dir + "items1.txt", dir + "U", dir + "V", dir + "S")
