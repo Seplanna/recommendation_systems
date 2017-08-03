@@ -27,8 +27,8 @@ n_test_users = 1000
 n_process = 1
 threshold = 3.5
 n_factors = FLAGS.u
-
 """
+
 data_dir = "../DATA/Amazone"
 dir = "../GeneratedDataAmazone/data" + str(FLAGS.f) + "/"
 item_dir = "../GeneratedDataAmazone/data" + str(FLAGS.f) + "/ITEMS/"
@@ -293,9 +293,10 @@ def TrainTestUsers(rating_file, popular_it_file):
     test_rat[popular_items] = 0.
     print(len(test_rat.nonzero()[0]))
     test_rat = test_rat.T
+    reg = FLAGS.r
     model = ExplicitMF(train, n_factors=n_factors, learning='sgd', \
-                                 item_fact_reg=0.1, user_fact_reg=0.1, \
-                                 user_bias_reg=0.1, item_bias_reg=0.1)
+                                 item_fact_reg=reg, user_fact_reg=reg, \
+                                 user_bias_reg=reg, item_bias_reg=reg)
     model.item_vecs = np.genfromtxt(dir + "items1.txt")
     item_bias = np.genfromtxt(dir + "items_bias1.txt")
     print(item_bias)
@@ -333,7 +334,8 @@ def TrainTestUsers(rating_file, popular_it_file):
         for j in range(len(non_zero)):
             prediction.append(model.predict(i, non_zero[j]))
     """
-    model.train(10, learning_rate=0.1, from_scratch=False, user_step=True, item_step=False)
+    learning_rate_Amazone = 0.1
+    model.train(10, learning_rate=0.005, from_scratch=False, user_step=True, item_step=False)
     print(Print_result(model, train))
     print(Print_result(model, test_rat))
     np.savetxt(dir + "user_bias.txt", model.user_bias)
